@@ -1,7 +1,6 @@
 use anyhow::{bail, Result};
 use lazy_static::lazy_static;
 use regex::Regex;
-use swc_common::comments::SingleThreadedComments;
 use swc_common::errors::{ColorConfig, Handler};
 use swc_common::sync::Lrc;
 use swc_common::{FileName, Globals, Mark, SourceMap, GLOBALS};
@@ -12,7 +11,6 @@ use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax};
 use swc_ecma_transforms_base::fixer::fixer;
 use swc_ecma_transforms_base::hygiene::hygiene;
 use swc_ecma_transforms_base::resolver;
-use swc_ecma_transforms_react::{react, Options};
 use swc_ecma_transforms_typescript::strip;
 use swc_ecma_visit::FoldWith;
 
@@ -83,103 +81,5 @@ impl TypeScript {
         });
 
         Ok(String::from_utf8_lossy(&buffer).to_string())
-    }
-}
-
-pub struct Jsx;
-
-impl Jsx {
-    /// Compiles JSX code into JavaScript.
-    pub fn compile(filename: Option<&str>, source: &str) -> Result<String> {
-        let globals = Globals::default();
-        let cm: Lrc<SourceMap> = Default::default();
-        let handler = Handler::with_tty_emitter(ColorConfig::Auto, true, false, Some(cm.clone()));
-
-        let filename = match filename {
-            Some(filename) => FileName::Custom(filename.into()),
-            None => FileName::Anon,
-        };
-
-        let fm = cm.new_source_file(filename, source.into());
-
-        // NOTE: We're using a TypeScript lexer to parse JSX because it's a super-set
-        // of JavaScript and we also want to support .tsx files.
-
-        let lexer = Lexer::new(
-            Syntax::Typescript(TsSyntax {
-                tsx: true,
-                decorators: true,
-                no_early_errors: true,
-                ..Default::default()
-            }),
-            Default::default(),
-            StringInput::from(&*fm),
-            None,
-        );
-
-        let mut parser = Parser::new_from(lexer);
-
-        let module = match parser
-            .parse_module()
-            .map_err(|e| e.into_diagnostic(&handler).emit())
-        {
-            Ok(module) => module,
-            Err(_) => bail!("JSX compilation failed."),
-        };
-
-        // This is where we're gonna store the JavaScript output.
-        let mut buffer = vec![];
-
-        // Look for the JSX pragma in the source code.
-        // https://www.gatsbyjs.com/blog/2019-08-02-what-is-jsx-pragma/
-
-        let pragma = PRAGMA_REGEX
-            .find_iter(source)
-            .next()
-            .map(|m| m.as_str().to_string().replace("@jsx ", ""));
-
-        GLOBALS.set(&globals, || {
-            // Apply SWC transforms to given code.
-            let module = module.fold_with(&mut react::<SingleThreadedComments>(
-                cm.clone(),
-                None,
-                Options {
-                    pragma,
-                    ..Default::default()
-                },
-                Mark::new(),
-                Mark::new(),
-            ));
-
-            {
-                let mut emitter = Emitter {
-                    cfg: swc_ecma_codegen::Config::default(),
-                    cm: cm.clone(),
-                    comments: None,
-                    wr: JsWriter::new(cm, "\n", &mut buffer, None),
-                };
-
-                emitter.emit_module(&module).unwrap();
-            }
-        });
-
-        Ok(String::from_utf8_lossy(&buffer).to_string())
-    }
-}
-
-pub struct Wasm;
-
-impl Wasm {
-    // Converts a wasm binary into an ES module template.
-    pub fn parse(source: &str) -> String {
-        format!(
-            "
-        const wasmCode = new Uint8Array({:?});
-        const wasmModule = new WebAssembly.Module(wasmCode);
-        const wasmInstance = new WebAssembly.Instance(wasmModule);
-        export default wasmInstance.exports;
-        ",
-            source.as_bytes()
-        )
     }
 }
