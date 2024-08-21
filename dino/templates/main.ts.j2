@@ -1,4 +1,4 @@
-async function hello(req: Request): Promise<Response> {
+async function hello(req: Request): Response {
   return new Response('Hello, world!', {
     headers: { 'content-type': 'text/plain' },
   });
