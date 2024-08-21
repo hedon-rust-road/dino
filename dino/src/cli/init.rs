@@ -1,7 +1,9 @@
 use std::{fs, path::Path};
 
+use askama::Template;
 use clap::Parser;
 use dialoguer::Input;
+use git2::Repository;
 
 use crate::CmdExecutor;
 
@@ -25,6 +27,34 @@ impl CmdExecutor for InitOpts {
     }
 }
 
+#[derive(Template)]
+#[template(path = "config.yml.j2")]
+struct ConfigFile {
+    name: String,
+}
+
+#[derive(Template)]
+#[template(path = "main.ts.j2")]
+struct MainTsFile {}
+
+#[derive(Template)]
+#[template(path = ".gitignore.j2")]
+struct GitIgnoreFile {}
+
 fn init_project(name: &str, path: &Path) -> anyhow::Result<()> {
-    todo!()
+    Repository::init(path)?;
+
+    // init config file
+    let config = ConfigFile {
+        name: name.to_string(),
+    };
+    fs::write(path.join("config.yml"), config.render()?)?;
+
+    // init main.ts file
+    fs::write(path.join("main.ts"), MainTsFile {}.render()?)?;
+
+    // init .gitignore file
+    fs::write(path.join(".gitignore"), GitIgnoreFile {}.render()?)?;
+
+    Ok(())
 }

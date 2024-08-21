@@ -1,0 +1,7 @@
+async function hello(req: Request): Promise<Response> {
+  return new Response('Hello, world!', {
+    headers: { 'content-type': 'text/plain' },
+  });
+}
+
+export { hello };
