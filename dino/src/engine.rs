@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use rquickjs::{Context, FromJs, Function, IntoJs, Object, Promise, Runtime};
+use dino_macros::{FromJs, IntoJs};
+use rquickjs::{Context, Function, Object, Promise, Runtime};
 use typed_builder::TypedBuilder;
 
 #[allow(unused)]
@@ -9,8 +10,8 @@ pub struct JsWorker {
     ctx: Context,
 }
 
-#[derive(Debug, TypedBuilder)]
-pub struct Request {
+#[derive(Debug, TypedBuilder, IntoJs)]
+pub struct Req {
     pub headers: HashMap<String, String>,
     #[builder(setter(into))]
     pub method: String,
@@ -20,8 +21,8 @@ pub struct Request {
     pub body: Option<String>,
 }
 
-#[derive(Debug)]
-pub struct Response {
+#[derive(Debug, FromJs)]
+pub struct Res {
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
@@ -50,7 +51,7 @@ impl JsWorker {
         Ok(Self { rt, ctx })
     }
 
-    pub fn run(&self, name: &str, req: Request) -> anyhow::Result<Response> {
+    pub fn run(&self, name: &str, req: Req) -> anyhow::Result<Res> {
         self.ctx.with(|ctx| {
             let globals = ctx.globals();
             let handlers = globals.get::<_, Object>("handlers")?;
@@ -58,31 +59,6 @@ impl JsWorker {
             let v: Promise = fun.call((req,))?;
 
             Ok::<_, anyhow::Error>(v.finish()?)
-        })
-    }
-}
-
-impl<'js> IntoJs<'js> for Request {
-    fn into_js(self, ctx: &rquickjs::Ctx<'js>) -> rquickjs::Result<rquickjs::Value<'js>> {
-        let obj = ctx.globals();
-        obj.set("headers", self.headers)?;
-        obj.set("method", self.method)?;
-        obj.set("url", self.url)?;
-        obj.set("body", self.body)?;
-        Ok(obj.into())
-    }
-}
-
-impl<'js> FromJs<'js> for Response {
-    fn from_js(_ctx: &rquickjs::Ctx<'js>, v: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
-        let obj = v.into_object().unwrap();
-        let status = obj.get::<_, u16>("status")?;
-        let headers = obj.get::<_, HashMap<String, String>>("headers")?;
-        let body = obj.get::<_, Option<String>>("body")?;
-        Ok(Self {
-            status,
-            headers,
-            body,
         })
     }
 }
@@ -108,7 +84,7 @@ mod tests {
 })();
         "#;
 
-        let req = Request::builder()
+        let req = Req::builder()
             .method("GET")
             .url("https://example.com")
             .headers(HashMap::new())
