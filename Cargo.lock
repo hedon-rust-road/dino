@@ -765,6 +765,7 @@ dependencies = [
  "glob",
  "rquickjs-macro",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 

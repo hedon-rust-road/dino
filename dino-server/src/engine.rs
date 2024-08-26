@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use axum::{body::Body, response::Response};
 use dino_macros::{FromJs, IntoJs};
 use rquickjs::{Context, Function, Object, Promise, Runtime};
 use typed_builder::TypedBuilder;
@@ -12,13 +13,17 @@ pub struct JsWorker {
 
 #[derive(Debug, TypedBuilder, IntoJs)]
 pub struct Req {
-    #[builder(default)]
-    pub headers: HashMap<String, String>,
     #[builder(setter(into))]
     pub method: String,
     #[builder(setter(into))]
     pub url: String,
-    #[builder(default, setter(strip_option))]
+    #[builder(default)]
+    pub query: HashMap<String, String>,
+    #[builder(default)]
+    pub params: HashMap<String, String>,
+    #[builder(default)]
+    pub headers: HashMap<String, String>,
+    #[builder(default)]
     pub body: Option<String>,
 }
 
@@ -27,6 +32,20 @@ pub struct Res {
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
+}
+
+impl From<Res> for Response {
+    fn from(res: Res) -> Self {
+        let mut builder = Response::builder().status(res.status);
+        for (k, v) in res.headers {
+            builder = builder.header(k, v);
+        }
+        if let Some(body) = res.body {
+            builder.body(body.into()).unwrap()
+        } else {
+            builder.body(Body::empty()).unwrap()
+        }
+    }
 }
 
 fn print(msg: String) {

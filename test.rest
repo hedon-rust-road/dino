@@ -2,10 +2,4 @@
 
 ### get hello
 
-GET http://localhost:8888/api/hello/1
-Content-Type: application/json
-
-{
-    "id": 1,
-    "name": "hello"
-}
+GET http://localhost:8888/api/hello/1?name=hello
