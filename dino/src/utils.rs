@@ -23,7 +23,7 @@ pub(crate) fn get_files_with_exts(dir: &str, exts: &[&str]) -> anyhow::Result<BT
 }
 
 pub(crate) fn calc_project_hash(dir: &str) -> anyhow::Result<String> {
-    calc_hash_for_files(dir, &["ts", "fs", "json"], 16)
+    calc_hash_for_files(dir, &["ts", "fs", "json", "yml", "yaml"], 16)
 }
 
 pub(crate) fn calc_hash_for_files(dir: &str, exts: &[&str], len: usize) -> anyhow::Result<String> {
