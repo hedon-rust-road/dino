@@ -11,3 +11,5 @@
 *.pdb
 
 **dino-demo
+
+**.DS_Store
