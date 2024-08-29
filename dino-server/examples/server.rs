@@ -1,4 +1,7 @@
-use dino_server::{start_server, ProjectConfig, SwappableAppRouter, TenentRouter};
+use dino_server::{
+    start_server, ProjectConfig, SwappableAppRouter, SwappableWorkerPool, TenentRouter,
+    TenentWorkerPool,
+};
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{fmt::Layer, layer::SubscriberExt, util::SubscriberInitExt, Layer as _};
 
@@ -30,6 +33,11 @@ async fn main() -> anyhow::Result<()> {
         SwappableAppRouter::try_new(code, config.routes)?,
     )];
 
-    start_server(8888, routers).await?;
+    let pools = vec![TenentWorkerPool::new(
+        "localhost",
+        SwappableWorkerPool::try_new(code, 10)?,
+    )];
+
+    start_server(8888, routers, pools).await?;
     Ok(())
 }

@@ -1,7 +1,10 @@
 use std::{fs, time::Duration};
 
 use clap::Parser;
-use dino_server::{start_server, ProjectConfig, SwappableAppRouter, TenentRouter};
+use dino_server::{
+    start_server, ProjectConfig, SwappableAppRouter, SwappableWorkerPool, TenentRouter,
+    TenentWorkerPool,
+};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
 use tokio::sync::mpsc::channel;
@@ -12,6 +15,7 @@ use tracing_subscriber::{fmt::Layer, layer::SubscriberExt, util::SubscriberInitE
 use crate::{build_project, CmdExecutor};
 
 const MONITOR_FS_INTERVAL: Duration = Duration::from_secs(2);
+const WOERK_POOL_SIZE: usize = 10;
 
 #[derive(Debug, Parser)]
 pub struct RunOpts {
@@ -25,11 +29,11 @@ impl CmdExecutor for RunOpts {
         tracing_subscriber::registry().with(layer).init();
         let (code, config) = get_code_and_config()?;
         let router = SwappableAppRouter::try_new(&code, config.routes)?;
+        let pool = SwappableWorkerPool::try_new(code, WOERK_POOL_SIZE)?;
         let routers = vec![TenentRouter::new("localhost", router.clone())];
-
-        tokio::spawn(async_watch(".", router));
-
-        start_server(self.port, routers).await?;
+        let pools = vec![TenentWorkerPool::new("localhost", pool.clone())];
+        tokio::spawn(async_watch(".", router, pool));
+        start_server(self.port, routers, pools).await?;
         Ok(())
     }
 }
@@ -42,7 +46,11 @@ fn get_code_and_config() -> anyhow::Result<(String, ProjectConfig)> {
     Ok((code, config))
 }
 
-async fn async_watch(p: &str, router: SwappableAppRouter) -> anyhow::Result<()> {
+async fn async_watch(
+    p: &str,
+    router: SwappableAppRouter,
+    pool: SwappableWorkerPool,
+) -> anyhow::Result<()> {
     let (tx, rx) = channel(1);
 
     let mut debouncer = new_debouncer(MONITOR_FS_INTERVAL, move |res: DebounceEventResult| {
@@ -69,8 +77,10 @@ async fn async_watch(p: &str, router: SwappableAppRouter) -> anyhow::Result<()> 
                 }
                 if need_swap {
                     let (code, config) = get_code_and_config()?;
-                    router.swap(code, config.routes)?;
-                    info!("Router swapped")
+                    router.swap(code.clone(), config.routes)?;
+                    info!("Router swapped");
+                    pool.swap(code)?;
+                    info!("Worker Pool swapped");
                 }
             }
             Err(e) => {

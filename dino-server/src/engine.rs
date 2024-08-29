@@ -1,9 +1,19 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::atomic::AtomicUsize, thread};
 
 use axum::{body::Body, response::Response};
 use dino_macros::{FromJs, IntoJs};
 use rquickjs::{Context, Function, Object, Promise, Runtime};
+use tokio::sync::mpsc;
+use tracing::info;
 use typed_builder::TypedBuilder;
+
+type WorkRequest = (String, Req);
+type WorkResponse = oneshot::Sender<Res>;
+
+pub struct JsWorkerPool {
+    senders: Vec<mpsc::Sender<(WorkRequest, WorkResponse)>>,
+    indexes: AtomicUsize,
+}
 
 #[allow(unused)]
 pub struct JsWorker {
@@ -50,6 +60,45 @@ impl From<Res> for Response {
 
 fn print(msg: String) {
     println!("hi, here is rust, this is your msg: {msg}")
+}
+
+impl JsWorkerPool {
+    pub fn new(size: usize, module: &str) -> Self {
+        let mut senders = Vec::with_capacity(size);
+        for _ in 0..size {
+            let (tx, mut rx) = mpsc::channel::<((String, Req), oneshot::Sender<Res>)>(1);
+            let code = module.to_string();
+            thread::spawn(move || {
+                let worker = JsWorker::try_new(&code).unwrap();
+                while let Some(((name, req), res_tx)) = rx.blocking_recv() {
+                    let res = worker.run(&name, req).unwrap();
+                    let _ = res_tx.send(res);
+                }
+            });
+            senders.push(tx);
+        }
+        Self {
+            senders,
+            indexes: AtomicUsize::new(0),
+        }
+    }
+
+    pub async fn run(&self, name: &str, req: Req) -> oneshot::Receiver<Res> {
+        let index = self
+            .indexes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let index = index % self.senders.len();
+        info!("[worker-{index}] is running {name}");
+
+        let sender = &self.senders[index];
+        let (res_tx, res_rx) = oneshot::channel();
+        sender
+            .send(((name.to_string(), req), res_tx))
+            .await
+            .unwrap();
+        res_rx
+    }
 }
 
 impl JsWorker {

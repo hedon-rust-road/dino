@@ -19,17 +19,20 @@ mod engine;
 mod error;
 mod middleware;
 mod router;
+mod worker_pool;
 
 pub use self::config::*;
 pub use self::engine::*;
 pub use self::error::AppError;
 pub use self::router::*;
+pub use self::worker_pool::*;
 
 type ProjectRoutes = IndexMap<String, Vec<ProjectRoute>>;
 
 #[derive(Clone)]
 pub struct AppState {
     routers: DashMap<String, SwappableAppRouter>,
+    worker_pools: DashMap<String, SwappableWorkerPool>,
 }
 
 #[derive(Clone)]
@@ -38,17 +41,31 @@ pub struct TenentRouter {
     router: SwappableAppRouter,
 }
 
-pub async fn start_server(port: u16, routers: Vec<TenentRouter>) -> anyhow::Result<()> {
+#[derive(Clone)]
+pub struct TenentWorkerPool {
+    host: String,
+    pool: SwappableWorkerPool,
+}
+
+pub async fn start_server(
+    port: u16,
+    routers: Vec<TenentRouter>,
+    worker_pools: Vec<TenentWorkerPool>,
+) -> anyhow::Result<()> {
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(addr).await?;
 
     info!("Listening on {}", listener.local_addr()?);
 
-    let map = DashMap::new();
+    let routes = DashMap::new();
     for TenentRouter { host, router } in routers {
-        map.insert(host, router);
+        routes.insert(host, router);
     }
-    let state = AppState::new(map);
+    let pools = DashMap::new();
+    for TenentWorkerPool { host, pool } in worker_pools {
+        pools.insert(host, pool);
+    }
+    let state = AppState::new(routes, pools);
     let app = Router::new()
         .route("/*path", any(handler))
         .layer(ServerTimeLayer)
@@ -66,20 +83,30 @@ async fn handler(
     Query(query): Query<HashMap<String, String>>,
     body: Option<Bytes>,
 ) -> Result<impl IntoResponse, AppError> {
-    let router = get_router_by_host(host, state)?;
+    let router = get_router_by_host(host.clone(), state.clone())?;
     let matched = router.match_it(parts.method.clone(), parts.uri.path())?;
     let req = assemble_req(&matched, &parts, query, body)?;
+
     // TODO: build a worker pool, and send req via mpsc channel and get res from oneshot channel
     // but if code changed we need to recreate the worker pool
-    let worker = JsWorker::try_new(&router.code)?;
+    // let worker = JsWorker::try_new(&router.code)?;
     let handler = matched.value;
-    let res = worker.run(handler, req)?;
+
+    let worker_pool = get_worker_pool_by_host(host, state)?;
+    let res = worker_pool.run(handler, req).await?;
+    // let res = worker.run(handler, req)?;
     Ok(Response::from(res))
 }
 
 impl AppState {
-    pub fn new(routers: DashMap<String, SwappableAppRouter>) -> Self {
-        Self { routers }
+    pub fn new(
+        routers: DashMap<String, SwappableAppRouter>,
+        pools: DashMap<String, SwappableWorkerPool>,
+    ) -> Self {
+        Self {
+            routers,
+            worker_pools: pools,
+        }
     }
 }
 
@@ -88,6 +115,15 @@ impl TenentRouter {
         Self {
             host: host.into(),
             router,
+        }
+    }
+}
+
+impl TenentWorkerPool {
+    pub fn new(host: impl Into<String>, pool: SwappableWorkerPool) -> Self {
+        Self {
+            host: host.into(),
+            pool,
         }
     }
 }
@@ -101,6 +137,17 @@ fn get_router_by_host(mut host: String, state: AppState) -> Result<AppRouter, Ap
         .ok_or(AppError::HostNotFound(host))?
         .load();
     Ok(router)
+}
+
+fn get_worker_pool_by_host(mut host: String, state: AppState) -> Result<WorkerPool, AppError> {
+    _ = host.split_off(host.find(':').unwrap_or(host.len()));
+    info!("host: {:?}", host);
+    let pool = state
+        .worker_pools
+        .get(&host)
+        .ok_or(AppError::HostNotFound(host))?
+        .load();
+    Ok(pool)
 }
 
 fn assemble_req(
